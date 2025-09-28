@@ -1,7 +1,7 @@
 #pragma once
-#include <D3d10.h>
 #include <Dxgiformat.h>
 #include <fstream>
+#include <iostream>
 #include <string>
 #include <unordered_map>
 #include <vector>
@@ -104,6 +104,15 @@ public:
   // DDS structures are 1-byte packed
 #pragma pack(push, 1)
 
+  enum D3D10_RESOURCE_DIMENSION
+  {
+    D3D10_RESOURCE_DIMENSION_UNKNOWN   = 0,
+    D3D10_RESOURCE_DIMENSION_BUFFER    = 1,
+    D3D10_RESOURCE_DIMENSION_TEXTURE1D = 2,
+    D3D10_RESOURCE_DIMENSION_TEXTURE2D = 3,
+    D3D10_RESOURCE_DIMENSION_TEXTURE3D = 4
+  };
+
   struct DDS_PIXELFORMAT
   {
     uint32_t dwSize;
@@ -161,150 +170,208 @@ public:
     std::ifstream file(t_path, std::ios::binary | std::ios::ate);
 
     if (!file) {
-      throw std::runtime_error("Failed to open DDS file: " + std::string(t_path));
+      throw std::runtime_error("DDS: Failed to open file: " + std::string(t_path));
     }
 
     // get file size
-    const long long fileSize = file.tellg();
+    std::streampos pos = file.tellg();
+    // validate
+    if (pos <= 0) {
+      throw std::runtime_error("DDS: Failed to determine file size");
+    }
+
+    const size_t fileSize = pos;
     file.seekg(0, std::ios::beg);
 
     char magic[4];
 
     // read magic
     if (!file.read(magic, 4) || std::memcmp(magic, "DDS ", 4) != 0) {
-      throw std::runtime_error("Not a DDS file");
+      throw std::runtime_error("DDS: Not a .dds file");
     }
 
     // read header struct directly
     if (!file.read(reinterpret_cast<char*>(&ddsFile.header), sizeof(DDS_HEADER))) {
-      throw std::runtime_error("Failed to read DDS header");
+      throw std::runtime_error("DDS: Failed to read DDS header");
     }
 
-    // read dxt10 header struct directly
-    if (!file.read(reinterpret_cast<char*>(&ddsFile.dxt10Header), sizeof(DDS_HEADER_DXT10))) {
-      throw std::runtime_error("Failed to read DDS DXT10 header");
-    }
+    size_t remainingBytes = fileSize - 4 /*magic*/ - sizeof(DDS_HEADER);
 
     switch (ddsFile.header.ddspf.dwFourCC) {
-      case DXT1:                   // "DXT1" little-endian
-        ddsFile.glFormat = 0x83F1; // GL_COMPRESSED_RGBA_S3TC_DXT1_EXT
+      case DXT1:                                                   // little-endian
+        ddsFile.glFormat = GL_COMPRESSED_SRGB_ALPHA_S3TC_DXT1_EXT; // assume sRGB for all non-DXT10 header files
         ddsFile.blockSize = 8;
         break;
-      case DXT3:                   // "DXT3"
-        ddsFile.glFormat = 0x83F2; // GL_COMPRESSED_RGBA_S3TC_DXT3_EXT
+      case DXT3:
+        ddsFile.glFormat = GL_COMPRESSED_SRGB_ALPHA_S3TC_DXT3_EXT;
         ddsFile.blockSize = 16;
         break;
-      case DXT5:                   // "DXT5"
-        ddsFile.glFormat = 0x83F3; // GL_COMPRESSED_RGBA_S3TC_DXT5_EXT
+      case DXT5:
+        ddsFile.glFormat = GL_COMPRESSED_SRGB_ALPHA_S3TC_DXT5_EXT;
         ddsFile.blockSize = 16;
         break;
-      case DX10: // "DX10" FourCC (DXT10 extension header)
-        if (DxgiFormatToString(ddsFile.dxt10Header.dxgiFormat).ends_with("SRGB")) {
-          ddsFile.glFormat = 0x8E8D; // COMPRESSED_SRGB_ALPHA_BPTC_UNORM_ARB
+      case DX10: // FourCC (DXT10 extension header)
+        // read dxt10 header struct directly
+        if (!file.read(reinterpret_cast<char*>(&ddsFile.dxt10Header), sizeof(DDS_HEADER_DXT10))) {
+          throw std::runtime_error("DDS: Failed to read DXT10 header");
         }
-        else {
-          ddsFile.glFormat = 0x8E8C; // COMPRESSED_RGBA_BPTC_UNORM_ARB
+
+        if (remainingBytes < sizeof(DDS_HEADER_DXT10)) {
+          throw std::runtime_error("DDS: Invalid file size: missing DX10 header bytes");
         }
-        ddsFile.blockSize = 16;
+
+        remainingBytes -= sizeof(DDS_HEADER_DXT10);
+
+        switch (ddsFile.dxt10Header.dxgiFormat) {
+          case DXGI_FORMAT_BC1_UNORM:
+          case DXGI_FORMAT_BC1_TYPELESS:
+            ddsFile.glFormat = GL_COMPRESSED_RGBA_S3TC_DXT1_EXT; // DXT1
+            ddsFile.blockSize = 8;
+            break;
+          case DXGI_FORMAT_BC1_UNORM_SRGB:
+            ddsFile.glFormat = GL_COMPRESSED_SRGB_ALPHA_S3TC_DXT1_EXT; // DXT1
+            ddsFile.blockSize = 8;
+            break;
+          case DXGI_FORMAT_BC2_UNORM:
+          case DXGI_FORMAT_BC2_TYPELESS:
+            ddsFile.glFormat = GL_COMPRESSED_RGBA_S3TC_DXT3_EXT; // DXT3
+            ddsFile.blockSize = 16;
+            break;
+          case DXGI_FORMAT_BC2_UNORM_SRGB:
+            ddsFile.glFormat = GL_COMPRESSED_SRGB_ALPHA_S3TC_DXT3_EXT; // DXT3
+            ddsFile.blockSize = 16;
+            break;
+          case DXGI_FORMAT_BC3_UNORM:
+          case DXGI_FORMAT_BC3_TYPELESS:
+            ddsFile.glFormat = GL_COMPRESSED_RGBA_S3TC_DXT5_EXT; // DXT5
+            ddsFile.blockSize = 16;
+            break;
+          case DXGI_FORMAT_BC3_UNORM_SRGB:
+            ddsFile.glFormat = GL_COMPRESSED_SRGB_ALPHA_S3TC_DXT5_EXT; // DXT5
+            ddsFile.blockSize = 16;
+            break;
+          case DXGI_FORMAT_BC4_UNORM:
+          case DXGI_FORMAT_BC4_TYPELESS:
+            ddsFile.glFormat = GL_COMPRESSED_RED_RGTC1; // BC4u
+            ddsFile.blockSize = 8;
+            break;
+          case DXGI_FORMAT_BC4_SNORM:
+            throw std::runtime_error("DDS: Unsupported DX10 DXGI_FORMAT");
+          case DXGI_FORMAT_BC5_TYPELESS:
+          case DXGI_FORMAT_BC5_UNORM:
+            ddsFile.glFormat = GL_COMPRESSED_RG_RGTC2; // BC5n
+            ddsFile.blockSize = 16;
+            break;
+          case DXGI_FORMAT_BC5_SNORM:
+            throw std::runtime_error("DDS: Unsupported DX10 DXGI_FORMAT");
+          case DXGI_FORMAT_BC7_UNORM:
+          case DXGI_FORMAT_BC7_TYPELESS:
+            ddsFile.glFormat = GL_COMPRESSED_RGBA_BPTC_UNORM; // BC7
+            ddsFile.blockSize = 16;
+            break;
+          case DXGI_FORMAT_BC7_UNORM_SRGB:
+            ddsFile.glFormat = GL_COMPRESSED_SRGB_ALPHA_BPTC_UNORM; // BC7
+            ddsFile.blockSize = 16;
+            break;
+          default:
+            throw std::runtime_error("DDS: Unsupported DX10 DXGI_FORMAT");
+        }
         break;
       default:
-        file.close();
-        throw std::runtime_error("Unsupported DDS format");
+        throw std::runtime_error("DDS: Unsupported format");
+    }
+
+    // make sure mip map is always at least 1
+    ddsFile.header.dwMipMapCount = ddsFile.header.dwMipMapCount ? ddsFile.header.dwMipMapCount : 1;
+
+    // compute expected size (compressed) and validate
+    auto mipSurfaceSize = [&] (const unsigned int t_w, const unsigned int t_h)-> size_t
+    {
+      const unsigned int blocksW = (t_w + 3) / 4;
+      const unsigned int blocksH = (t_h + 3) / 4;
+      return static_cast<size_t>(blocksW) * static_cast<size_t>(blocksH) * static_cast<size_t>(ddsFile.blockSize);
+    };
+
+    uint64_t     expectedSize = 0;
+    unsigned int w            = ddsFile.header.dwWidth;
+    unsigned int h            = ddsFile.header.dwHeight;
+    for (unsigned int mip = 0; mip < ddsFile.header.dwMipMapCount; ++mip) {
+      expectedSize += mipSurfaceSize(w, h);
+      w = std::max(1u, w / 2u);
+      h = std::max(1u, h / 2u);
+    }
+
+    if (remainingBytes < expectedSize) {
+      throw std::runtime_error("DDS: data size smaller than expected (corrupt or mismatched header)");
     }
 
     // read rest of file
-    ddsFile.file.resize(fileSize - 128);
-    if (!file.read(ddsFile.file.data(), fileSize - 128)) {
-      file.close();
-      throw std::runtime_error("Failed to read DDS file: " + std::string(t_path));
+    ddsFile.file.resize(remainingBytes);
+    if (!file.read(ddsFile.file.data(), static_cast<std::streamsize>(remainingBytes))) {
+      throw std::runtime_error("DDS: Failed to read file: " + std::string(t_path));
     }
+
+    FlipCompressedMipmaps(
+      ddsFile.file,
+      ddsFile.header.dwWidth,
+      ddsFile.header.dwHeight,
+      ddsFile.blockSize,
+      ddsFile.header.dwMipMapCount);
 
     return ddsFile;
   }
 
 private:
-  static inline const std::unordered_map<DXGI_FORMAT, const char*> DXGI_FORMAT_NAMES = {
-    {DXGI_FORMAT_UNKNOWN, "DXGI_FORMAT_UNKNOWN"}, {DXGI_FORMAT_R32G32B32A32_TYPELESS, "DXGI_FORMAT_R32G32B32A32_TYPELESS"},
-    {DXGI_FORMAT_R32G32B32A32_FLOAT, "DXGI_FORMAT_R32G32B32A32_FLOAT"},
-    {DXGI_FORMAT_R32G32B32A32_UINT, "DXGI_FORMAT_R32G32B32A32_UINT"},
-    {DXGI_FORMAT_R32G32B32A32_SINT, "DXGI_FORMAT_R32G32B32A32_SINT"},
-    {DXGI_FORMAT_R32G32B32_TYPELESS, "DXGI_FORMAT_R32G32B32_TYPELESS"},
-    {DXGI_FORMAT_R32G32B32_FLOAT, "DXGI_FORMAT_R32G32B32_FLOAT"}, {DXGI_FORMAT_R32G32B32_UINT, "DXGI_FORMAT_R32G32B32_UINT"},
-    {DXGI_FORMAT_R32G32B32_SINT, "DXGI_FORMAT_R32G32B32_SINT"},
-    {DXGI_FORMAT_R16G16B16A16_TYPELESS, "DXGI_FORMAT_R16G16B16A16_TYPELESS"},
-    {DXGI_FORMAT_R16G16B16A16_FLOAT, "DXGI_FORMAT_R16G16B16A16_FLOAT"},
-    {DXGI_FORMAT_R16G16B16A16_UNORM, "DXGI_FORMAT_R16G16B16A16_UNORM"},
-    {DXGI_FORMAT_R16G16B16A16_UINT, "DXGI_FORMAT_R16G16B16A16_UINT"},
-    {DXGI_FORMAT_R16G16B16A16_SNORM, "DXGI_FORMAT_R16G16B16A16_SNORM"},
-    {DXGI_FORMAT_R16G16B16A16_SINT, "DXGI_FORMAT_R16G16B16A16_SINT"},
-    {DXGI_FORMAT_R32G32_TYPELESS, "DXGI_FORMAT_R32G32_TYPELESS"}, {DXGI_FORMAT_R32G32_FLOAT, "DXGI_FORMAT_R32G32_FLOAT"},
-    {DXGI_FORMAT_R32G32_UINT, "DXGI_FORMAT_R32G32_UINT"}, {DXGI_FORMAT_R32G32_SINT, "DXGI_FORMAT_R32G32_SINT"},
-    {DXGI_FORMAT_R32G8X24_TYPELESS, "DXGI_FORMAT_R32G8X24_TYPELESS"},
-    {DXGI_FORMAT_D32_FLOAT_S8X24_UINT, "DXGI_FORMAT_D32_FLOAT_S8X24_UINT"},
-    {DXGI_FORMAT_R32_FLOAT_X8X24_TYPELESS, "DXGI_FORMAT_R32_FLOAT_X8X24_TYPELESS"},
-    {DXGI_FORMAT_X32_TYPELESS_G8X24_UINT, "DXGI_FORMAT_X32_TYPELESS_G8X24_UINT"},
-    {DXGI_FORMAT_R10G10B10A2_TYPELESS, "DXGI_FORMAT_R10G10B10A2_TYPELESS"},
-    {DXGI_FORMAT_R10G10B10A2_UNORM, "DXGI_FORMAT_R10G10B10A2_UNORM"},
-    {DXGI_FORMAT_R10G10B10A2_UINT, "DXGI_FORMAT_R10G10B10A2_UINT"}, {DXGI_FORMAT_R11G11B10_FLOAT, "DXGI_FORMAT_R11G11B10_FLOAT"},
-    {DXGI_FORMAT_R8G8B8A8_TYPELESS, "DXGI_FORMAT_R8G8B8A8_TYPELESS"}, {DXGI_FORMAT_R8G8B8A8_UNORM, "DXGI_FORMAT_R8G8B8A8_UNORM"},
-    {DXGI_FORMAT_R8G8B8A8_UNORM_SRGB, "DXGI_FORMAT_R8G8B8A8_UNORM_SRGB"},
-    {DXGI_FORMAT_R8G8B8A8_UINT, "DXGI_FORMAT_R8G8B8A8_UINT"}, {DXGI_FORMAT_R8G8B8A8_SNORM, "DXGI_FORMAT_R8G8B8A8_SNORM"},
-    {DXGI_FORMAT_R8G8B8A8_SINT, "DXGI_FORMAT_R8G8B8A8_SINT"}, {DXGI_FORMAT_R16G16_TYPELESS, "DXGI_FORMAT_R16G16_TYPELESS"},
-    {DXGI_FORMAT_R16G16_FLOAT, "DXGI_FORMAT_R16G16_FLOAT"}, {DXGI_FORMAT_R16G16_UNORM, "DXGI_FORMAT_R16G16_UNORM"},
-    {DXGI_FORMAT_R16G16_UINT, "DXGI_FORMAT_R16G16_UINT"}, {DXGI_FORMAT_R16G16_SNORM, "DXGI_FORMAT_R16G16_SNORM"},
-    {DXGI_FORMAT_R16G16_SINT, "DXGI_FORMAT_R16G16_SINT"}, {DXGI_FORMAT_R32_TYPELESS, "DXGI_FORMAT_R32_TYPELESS"},
-    {DXGI_FORMAT_D32_FLOAT, "DXGI_FORMAT_D32_FLOAT"}, {DXGI_FORMAT_R32_FLOAT, "DXGI_FORMAT_R32_FLOAT"},
-    {DXGI_FORMAT_R32_UINT, "DXGI_FORMAT_R32_UINT"}, {DXGI_FORMAT_R32_SINT, "DXGI_FORMAT_R32_SINT"},
-    {DXGI_FORMAT_R24G8_TYPELESS, "DXGI_FORMAT_R24G8_TYPELESS"}, {DXGI_FORMAT_D24_UNORM_S8_UINT, "DXGI_FORMAT_D24_UNORM_S8_UINT"},
-    {DXGI_FORMAT_R24_UNORM_X8_TYPELESS, "DXGI_FORMAT_R24_UNORM_X8_TYPELESS"},
-    {DXGI_FORMAT_X24_TYPELESS_G8_UINT, "DXGI_FORMAT_X24_TYPELESS_G8_UINT"},
-    {DXGI_FORMAT_R8G8_TYPELESS, "DXGI_FORMAT_R8G8_TYPELESS"}, {DXGI_FORMAT_R8G8_UNORM, "DXGI_FORMAT_R8G8_UNORM"},
-    {DXGI_FORMAT_R8G8_UINT, "DXGI_FORMAT_R8G8_UINT"}, {DXGI_FORMAT_R8G8_SNORM, "DXGI_FORMAT_R8G8_SNORM"},
-    {DXGI_FORMAT_R8G8_SINT, "DXGI_FORMAT_R8G8_SINT"}, {DXGI_FORMAT_R16_TYPELESS, "DXGI_FORMAT_R16_TYPELESS"},
-    {DXGI_FORMAT_R16_FLOAT, "DXGI_FORMAT_R16_FLOAT"}, {DXGI_FORMAT_D16_UNORM, "DXGI_FORMAT_D16_UNORM"},
-    {DXGI_FORMAT_R16_UNORM, "DXGI_FORMAT_R16_UNORM"}, {DXGI_FORMAT_R16_UINT, "DXGI_FORMAT_R16_UINT"},
-    {DXGI_FORMAT_R16_SNORM, "DXGI_FORMAT_R16_SNORM"}, {DXGI_FORMAT_R16_SINT, "DXGI_FORMAT_R16_SINT"},
-    {DXGI_FORMAT_R8_TYPELESS, "DXGI_FORMAT_R8_TYPELESS"}, {DXGI_FORMAT_R8_UNORM, "DXGI_FORMAT_R8_UNORM"},
-    {DXGI_FORMAT_R8_UINT, "DXGI_FORMAT_R8_UINT"}, {DXGI_FORMAT_R8_SNORM, "DXGI_FORMAT_R8_SNORM"},
-    {DXGI_FORMAT_R8_SINT, "DXGI_FORMAT_R8_SINT"}, {DXGI_FORMAT_A8_UNORM, "DXGI_FORMAT_A8_UNORM"},
-    {DXGI_FORMAT_R1_UNORM, "DXGI_FORMAT_R1_UNORM"}, {DXGI_FORMAT_R9G9B9E5_SHAREDEXP, "DXGI_FORMAT_R9G9B9E5_SHAREDEXP"},
-    {DXGI_FORMAT_R8G8_B8G8_UNORM, "DXGI_FORMAT_R8G8_B8G8_UNORM"}, {DXGI_FORMAT_G8R8_G8B8_UNORM, "DXGI_FORMAT_G8R8_G8B8_UNORM"},
-    {DXGI_FORMAT_BC1_TYPELESS, "DXGI_FORMAT_BC1_TYPELESS"}, {DXGI_FORMAT_BC1_UNORM, "DXGI_FORMAT_BC1_UNORM"},
-    {DXGI_FORMAT_BC1_UNORM_SRGB, "DXGI_FORMAT_BC1_UNORM_SRGB"}, {DXGI_FORMAT_BC2_TYPELESS, "DXGI_FORMAT_BC2_TYPELESS"},
-    {DXGI_FORMAT_BC2_UNORM, "DXGI_FORMAT_BC2_UNORM"}, {DXGI_FORMAT_BC2_UNORM_SRGB, "DXGI_FORMAT_BC2_UNORM_SRGB"},
-    {DXGI_FORMAT_BC3_TYPELESS, "DXGI_FORMAT_BC3_TYPELESS"}, {DXGI_FORMAT_BC3_UNORM, "DXGI_FORMAT_BC3_UNORM"},
-    {DXGI_FORMAT_BC3_UNORM_SRGB, "DXGI_FORMAT_BC3_UNORM_SRGB"}, {DXGI_FORMAT_BC4_TYPELESS, "DXGI_FORMAT_BC4_TYPELESS"},
-    {DXGI_FORMAT_BC4_UNORM, "DXGI_FORMAT_BC4_UNORM"}, {DXGI_FORMAT_BC4_SNORM, "DXGI_FORMAT_BC4_SNORM"},
-    {DXGI_FORMAT_BC5_TYPELESS, "DXGI_FORMAT_BC5_TYPELESS"}, {DXGI_FORMAT_BC5_UNORM, "DXGI_FORMAT_BC5_UNORM"},
-    {DXGI_FORMAT_BC5_SNORM, "DXGI_FORMAT_BC5_SNORM"}, {DXGI_FORMAT_B5G6R5_UNORM, "DXGI_FORMAT_B5G6R5_UNORM"},
-    {DXGI_FORMAT_B5G5R5A1_UNORM, "DXGI_FORMAT_B5G5R5A1_UNORM"}, {DXGI_FORMAT_B8G8R8A8_UNORM, "DXGI_FORMAT_B8G8R8A8_UNORM"},
-    {DXGI_FORMAT_B8G8R8X8_UNORM, "DXGI_FORMAT_B8G8R8X8_UNORM"},
-    {DXGI_FORMAT_R10G10B10_XR_BIAS_A2_UNORM, "DXGI_FORMAT_R10G10B10_XR_BIAS_A2_UNORM"},
-    {DXGI_FORMAT_B8G8R8A8_TYPELESS, "DXGI_FORMAT_B8G8R8A8_TYPELESS"},
-    {DXGI_FORMAT_B8G8R8A8_UNORM_SRGB, "DXGI_FORMAT_B8G8R8A8_UNORM_SRGB"},
-    {DXGI_FORMAT_B8G8R8X8_TYPELESS, "DXGI_FORMAT_B8G8R8X8_TYPELESS"},
-    {DXGI_FORMAT_B8G8R8X8_UNORM_SRGB, "DXGI_FORMAT_B8G8R8X8_UNORM_SRGB"},
-    {DXGI_FORMAT_BC6H_TYPELESS, "DXGI_FORMAT_BC6H_TYPELESS"}, {DXGI_FORMAT_BC6H_UF16, "DXGI_FORMAT_BC6H_UF16"},
-    {DXGI_FORMAT_BC6H_SF16, "DXGI_FORMAT_BC6H_SF16"}, {DXGI_FORMAT_BC7_TYPELESS, "DXGI_FORMAT_BC7_TYPELESS"},
-    {DXGI_FORMAT_BC7_UNORM, "DXGI_FORMAT_BC7_UNORM"}, {DXGI_FORMAT_BC7_UNORM_SRGB, "DXGI_FORMAT_BC7_UNORM_SRGB"},
-    {DXGI_FORMAT_AYUV, "DXGI_FORMAT_AYUV"}, {DXGI_FORMAT_Y410, "DXGI_FORMAT_Y410"}, {DXGI_FORMAT_Y416, "DXGI_FORMAT_Y416"},
-    {DXGI_FORMAT_NV12, "DXGI_FORMAT_NV12"}, {DXGI_FORMAT_P010, "DXGI_FORMAT_P010"}, {DXGI_FORMAT_P016, "DXGI_FORMAT_P016"},
-    {DXGI_FORMAT_420_OPAQUE, "DXGI_FORMAT_420_OPAQUE"}, {DXGI_FORMAT_YUY2, "DXGI_FORMAT_YUY2"},
-    {DXGI_FORMAT_Y210, "DXGI_FORMAT_Y210"}, {DXGI_FORMAT_Y216, "DXGI_FORMAT_Y216"}, {DXGI_FORMAT_NV11, "DXGI_FORMAT_NV11"},
-    {DXGI_FORMAT_AI44, "DXGI_FORMAT_AI44"}, {DXGI_FORMAT_IA44, "DXGI_FORMAT_IA44"}, {DXGI_FORMAT_P8, "DXGI_FORMAT_P8"},
-    {DXGI_FORMAT_A8P8, "DXGI_FORMAT_A8P8"}, {DXGI_FORMAT_B4G4R4A4_UNORM, "DXGI_FORMAT_B4G4R4A4_UNORM"},
-    {DXGI_FORMAT_P208, "DXGI_FORMAT_P208"}, {DXGI_FORMAT_V208, "DXGI_FORMAT_V208"}, {DXGI_FORMAT_V408, "DXGI_FORMAT_V408"},
-    {DXGI_FORMAT_SAMPLER_FEEDBACK_MIN_MIP_OPAQUE, "DXGI_FORMAT_SAMPLER_FEEDBACK_MIN_MIP_OPAQUE"},
-    {DXGI_FORMAT_SAMPLER_FEEDBACK_MIP_REGION_USED_OPAQUE, "DXGI_FORMAT_SAMPLER_FEEDBACK_MIP_REGION_USED_OPAQUE"},
-    {DXGI_FORMAT_A4B4G4R4_UNORM, "DXGI_FORMAT_A4B4G4R4_UNORM"}, {DXGI_FORMAT_FORCE_UINT, "DXGI_FORMAT_FORCE_UINT"}};
+  // comment this enum when including in projects that already includes ogl
+  enum OGL_FORMAT
+  {
+    GL_COMPRESSED_RGB_S3TC_DXT1_EXT        = 0x83F0, // DXT1 RGB linear
+    GL_COMPRESSED_RGBA_S3TC_DXT1_EXT       = 0x83F1, // DXT1 RGBA linear
+    GL_COMPRESSED_RGBA_S3TC_DXT3_EXT       = 0x83F2, // DXT3 RGBA linear
+    GL_COMPRESSED_RGBA_S3TC_DXT5_EXT       = 0x83F3, // DXT5 RGBA linear
+    GL_COMPRESSED_SRGB_S3TC_DXT1_EXT       = 0x8C4C, // DXT1 RGB sRGB 
+    GL_COMPRESSED_SRGB_ALPHA_S3TC_DXT1_EXT = 0x8C4D, // DXT1 RGBA sRGB
+    GL_COMPRESSED_SRGB_ALPHA_S3TC_DXT3_EXT = 0x8C4E, // DXT3 RGBA sRGB
+    GL_COMPRESSED_SRGB_ALPHA_S3TC_DXT5_EXT = 0x8C4F, // DXT5 RGBA sRGB
+    GL_COMPRESSED_RGBA_BPTC_UNORM          = 0x8E8C, // BC7 RGBA linear
+    GL_COMPRESSED_SRGB_ALPHA_BPTC_UNORM    = 0x8E8D, // BC7 RGBA sRGB
+    GL_COMPRESSED_RG_RGTC2                 = 0x8D8D, // BC5n RG linear
+    GL_COMPRESSED_RED_RGTC1                = 0x8DBB, // BC4u R linear
+  };
 
-  static std::string DxgiFormatToString(const DXGI_FORMAT t_fmt) {
-    const auto it = DXGI_FORMAT_NAMES.find(t_fmt);
-    return it != DXGI_FORMAT_NAMES.end() ? it->second : "UNKNOWN_DXGI_FORMAT";
+  static void FlipCompressedMipmaps(std::vector<char>& t_data,
+                                    unsigned int       t_width,
+                                    unsigned int       t_height,
+                                    const unsigned int t_blockSize,
+                                    const unsigned int t_mipCount) {
+    size_t offset = 0;
+
+    for (unsigned int mip = 0; mip < t_mipCount; ++mip) {
+      const unsigned int blocksWide = (t_width + 3) / 4;
+      const unsigned int blocksHigh = (t_height + 3) / 4;
+      const size_t       rowSize    = static_cast<size_t>(blocksWide) * t_blockSize;
+      std::vector<char>  tempRow(rowSize);
+
+      for (unsigned int y = 0; y < blocksHigh / 2; ++y) {
+        char* top    = t_data.data() + offset + y * rowSize;
+        char* bottom = t_data.data() + offset + (blocksHigh - 1 - y) * rowSize;
+
+        std::memcpy(tempRow.data(), top, rowSize);
+        std::memcpy(top, bottom, rowSize);
+        std::memcpy(bottom, tempRow.data(), rowSize);
+      }
+
+      // move offset to next mip
+      offset += rowSize * blocksHigh;
+
+      // next mip is half width/height, at least 1
+      t_width  = std::max(static_cast<unsigned int>(1), t_width / 2);
+      t_height = std::max(static_cast<unsigned int>(1), t_height / 2);
+    }
   }
 
-  static constexpr uint32_t DXT1 = 0x31545844; // "DXT1"
-  static constexpr uint32_t DXT3 = 0x33545844; // "DXT3"
-  static constexpr uint32_t DXT5 = 0x35545844; // "DXT5"
-  static constexpr uint32_t DX10 = 0x30315844; // "DX10"
+  static constexpr uint32_t DXT1 = 0x31545844;
+  static constexpr uint32_t DXT3 = 0x33545844;
+  static constexpr uint32_t DXT5 = 0x35545844;
+  static constexpr uint32_t DX10 = 0x30315844;
 };
