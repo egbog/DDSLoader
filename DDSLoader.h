@@ -15,8 +15,7 @@
   HEADER_DX10* 20	(https://msdn.microsoft.com/en-us/library/bb943983(v=vs.85).aspx)
   bdata(2)     fseek(f, 0, SEEK_END); (ftell(f) - 128) - (fourCC == "DX10" ? 17 or 20 : 0)
 * the link tells you that this section isn't written unless its a DX10 file
-Supports DXT1, DXT3, DXT5.
-The problem with supporting DX10 is you need to know what it is used for and how opengl would use it.
+Supports DXT1, DXT3, DXT5, DXT10
 
 File Byte Order:
 typedef unsigned int DWORD;                           32bits little endian
