@@ -182,7 +182,7 @@ public:
 
     // read dxt10 header struct directly
     if (!file.read(reinterpret_cast<char*>(&ddsFile.dxt10Header), sizeof(DDS_HEADER_DXT10))) {
-      throw std::runtime_error("Failed to read DDS header");
+      throw std::runtime_error("Failed to read DDS DXT10 header");
     }
 
     switch (ddsFile.header.ddspf.dwFourCC) {
