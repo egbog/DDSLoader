@@ -150,11 +150,11 @@ public:
 
   struct DDS_FILE
   {
-    DDS_HEADER        header;
-    DDS_HEADER_DXT10  dxt10Header;
+    DDS_HEADER              header;
+    DDS_HEADER_DXT10        dxt10Header;
     std::unique_ptr<char[]> file;
-    unsigned int      blockSize;
-    unsigned int      glFormat;
+    unsigned int            blockSize;
+    unsigned int            glFormat;
   };
 
 #pragma pack(pop)
@@ -218,7 +218,7 @@ public:
 
         remainingBytes -= sizeof(DDS_HEADER_DXT10);
 
-        switch (ddsFile.dxt10Header.dxgiFormat) {  // NOLINT(clang-diagnostic-switch-enum)
+        switch (ddsFile.dxt10Header.dxgiFormat) { // NOLINT(clang-diagnostic-switch-enum)
           case DXGI_FORMAT_BC1_UNORM:
           case DXGI_FORMAT_BC1_TYPELESS:
             ddsFile.glFormat = GL_COMPRESSED_RGBA_S3TC_DXT1_EXT; // DXT1
@@ -319,6 +319,7 @@ public:
 
 private:
   // comment this enum when including in projects that already includes ogl
+#if !defined(GL_VERSION_3_0)
   enum OGL_FORMAT
   {
     GL_COMPRESSED_RGB_S3TC_DXT1_EXT        = 0x83F0, // DXT1 RGB linear
@@ -334,19 +335,20 @@ private:
     GL_COMPRESSED_RG_RGTC2                 = 0x8D8D, // BC5n RG linear
     GL_COMPRESSED_RED_RGTC1                = 0x8DBB, // BC4u R linear
   };
+#endif
 
   static void FlipCompressedMipmaps(const std::unique_ptr<char[]>& t_data,
-                                    unsigned int       t_width,
-                                    unsigned int       t_height,
-                                    const unsigned int t_blockSize,
-                                    const unsigned int t_mipCount) {
+                                    unsigned int                   t_width,
+                                    unsigned int                   t_height,
+                                    const unsigned int             t_blockSize,
+                                    const unsigned int             t_mipCount) {
     size_t offset = 0;
 
     for (unsigned int mip = 0; mip < t_mipCount; ++mip) {
       const unsigned int blocksWide = (t_width + 3) / 4;
       const unsigned int blocksHigh = (t_height + 3) / 4;
       const size_t       rowSize    = static_cast<size_t>(blocksWide) * t_blockSize;
-      auto tempRow = std::make_unique<char[]>(rowSize);
+      auto               tempRow    = std::make_unique<char[]>(rowSize);
 
 
       for (unsigned int y = 0; y < blocksHigh / 2; ++y) {
