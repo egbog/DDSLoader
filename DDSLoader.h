@@ -1,10 +1,6 @@
 #pragma once
 #include <Dxgiformat.h>
 #include <fstream>
-#include <iostream>
-#include <string>
-#include <unordered_map>
-#include <vector>
 
 /*
  File Structure:
@@ -156,7 +152,7 @@ public:
   {
     DDS_HEADER        header;
     DDS_HEADER_DXT10  dxt10Header;
-    std::vector<char> file;
+    std::unique_ptr<char[]> file;
     unsigned int      blockSize;
     unsigned int      glFormat;
   };
@@ -222,7 +218,7 @@ public:
 
         remainingBytes -= sizeof(DDS_HEADER_DXT10);
 
-        switch (ddsFile.dxt10Header.dxgiFormat) {
+        switch (ddsFile.dxt10Header.dxgiFormat) {  // NOLINT(clang-diagnostic-switch-enum)
           case DXGI_FORMAT_BC1_UNORM:
           case DXGI_FORMAT_BC1_TYPELESS:
             ddsFile.glFormat = GL_COMPRESSED_RGBA_S3TC_DXT1_EXT; // DXT1
@@ -306,8 +302,8 @@ public:
     }
 
     // read rest of file
-    ddsFile.file.resize(remainingBytes);
-    if (!file.read(ddsFile.file.data(), static_cast<std::streamsize>(remainingBytes))) {
+    ddsFile.file = std::make_unique<char[]>(remainingBytes);
+    if (!file.read(ddsFile.file.get(), static_cast<std::streamsize>(remainingBytes))) {
       throw std::runtime_error("DDS: Failed to read file: " + std::string(t_path));
     }
 
@@ -339,7 +335,7 @@ private:
     GL_COMPRESSED_RED_RGTC1                = 0x8DBB, // BC4u R linear
   };
 
-  static void FlipCompressedMipmaps(std::vector<char>& t_data,
+  static void FlipCompressedMipmaps(const std::unique_ptr<char[]>& t_data,
                                     unsigned int       t_width,
                                     unsigned int       t_height,
                                     const unsigned int t_blockSize,
@@ -350,15 +346,16 @@ private:
       const unsigned int blocksWide = (t_width + 3) / 4;
       const unsigned int blocksHigh = (t_height + 3) / 4;
       const size_t       rowSize    = static_cast<size_t>(blocksWide) * t_blockSize;
-      std::vector<char>  tempRow(rowSize);
+      auto tempRow = std::make_unique<char[]>(rowSize);
+
 
       for (unsigned int y = 0; y < blocksHigh / 2; ++y) {
-        char* top    = t_data.data() + offset + y * rowSize;
-        char* bottom = t_data.data() + offset + (blocksHigh - 1 - y) * rowSize;
+        char* top    = t_data.get() + offset + y * rowSize;
+        char* bottom = t_data.get() + offset + (blocksHigh - 1 - y) * rowSize;
 
-        std::memcpy(tempRow.data(), top, rowSize);
+        std::memcpy(tempRow.get(), top, rowSize);
         std::memcpy(top, bottom, rowSize);
-        std::memcpy(bottom, tempRow.data(), rowSize);
+        std::memcpy(bottom, tempRow.get(), rowSize);
       }
 
       // move offset to next mip
