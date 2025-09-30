@@ -206,6 +206,10 @@ public:
         ddsFile.glFormat = GL_COMPRESSED_SRGB_ALPHA_S3TC_DXT5_EXT;
         ddsFile.blockSize = 16;
         break;
+      case BC5_U: // non DXT10 header BC5u
+        ddsFile.glFormat = GL_COMPRESSED_RG_RGTC2;
+        ddsFile.blockSize = 16;
+        break;
       case DX10: // FourCC (DXT10 extension header)
         // read dxt10 header struct directly
         if (!file.read(reinterpret_cast<char*>(&ddsFile.dxt10Header), sizeof(DDS_HEADER_DXT10))) {
@@ -369,8 +373,9 @@ private:
     }
   }
 
-  static constexpr uint32_t DXT1 = 0x31545844;
-  static constexpr uint32_t DXT3 = 0x33545844;
-  static constexpr uint32_t DXT5 = 0x35545844;
-  static constexpr uint32_t DX10 = 0x30315844;
+  static constexpr uint32_t DXT1  = 0x31545844;
+  static constexpr uint32_t DXT3  = 0x33545844;
+  static constexpr uint32_t DXT5  = 0x35545844;
+  static constexpr uint32_t DX10  = 0x30315844;
+  static constexpr uint32_t BC5_U = 0x55354342;
 };
