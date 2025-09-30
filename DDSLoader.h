@@ -114,7 +114,7 @@ public:
   {
     uint32_t dwSize;
     uint32_t dwFlags;
-    uint32_t dwFourCC = DXT1; // <-- where "DXT1", "DXT3", "DXT5" live
+    uint32_t dwFourCC = 0; // <-- where "DXT1", "DXT3", "DXT5" live
     uint32_t dwRGBBitCount;
     uint32_t dwRBitMask;
     uint32_t dwGBitMask;
@@ -154,8 +154,8 @@ public:
     DDS_HEADER              header;
     DDS_HEADER_DXT10        dxt10Header;
     std::unique_ptr<char[]> file;
-    unsigned int            blockSize = 8;
-    unsigned int            glFormat  = GL_COMPRESSED_SRGB_ALPHA_S3TC_DXT1_EXT; // fallback format
+    unsigned int            blockSize = 0;
+    unsigned int            glFormat  = 0; // fallback format
   };
 
 #pragma pack(pop)
