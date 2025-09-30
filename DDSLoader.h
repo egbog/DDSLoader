@@ -1,6 +1,7 @@
 #pragma once
 #include <Dxgiformat.h>
 #include <fstream>
+#include <iostream>
 
 /*
  File Structure:
@@ -113,7 +114,7 @@ public:
   {
     uint32_t dwSize;
     uint32_t dwFlags;
-    uint32_t dwFourCC; // <-- where "DXT1", "DXT3", "DXT5" live
+    uint32_t dwFourCC = DXT1; // <-- where "DXT1", "DXT3", "DXT5" live
     uint32_t dwRGBBitCount;
     uint32_t dwRBitMask;
     uint32_t dwGBitMask;
@@ -125,11 +126,11 @@ public:
   {
     uint32_t        dwSize;
     uint32_t        dwFlags;
-    uint32_t        dwHeight;
-    uint32_t        dwWidth;
+    uint32_t        dwHeight = 1;
+    uint32_t        dwWidth  = 1;
     uint32_t        dwPitchOrLinearSize;
     uint32_t        dwDepth;
-    uint32_t        dwMipMapCount;
+    uint32_t        dwMipMapCount = 1;
     uint32_t        dwReserved1[11];
     DDS_PIXELFORMAT ddspf; // offset 76
     uint32_t        dwCaps;
@@ -141,11 +142,11 @@ public:
 
   struct DDS_HEADER_DXT10
   {
-    DXGI_FORMAT              dxgiFormat;
-    D3D10_RESOURCE_DIMENSION resourceDimension;
-    unsigned int             miscFlag;
-    unsigned int             arraySize;
-    unsigned int             miscFlags2;
+    DXGI_FORMAT              dxgiFormat        = static_cast<DXGI_FORMAT>(0);
+    D3D10_RESOURCE_DIMENSION resourceDimension = static_cast<D3D10_RESOURCE_DIMENSION>(0);
+    unsigned int             miscFlag          = 0;
+    unsigned int             arraySize         = 0;
+    unsigned int             miscFlags2        = 0;
   };
 
   struct DDS_FILE
@@ -153,172 +154,178 @@ public:
     DDS_HEADER              header;
     DDS_HEADER_DXT10        dxt10Header;
     std::unique_ptr<char[]> file;
-    unsigned int            blockSize;
-    unsigned int            glFormat;
+    unsigned int            blockSize = 8;
+    unsigned int            glFormat  = GL_COMPRESSED_SRGB_ALPHA_S3TC_DXT1_EXT; // fallback format
   };
 
 #pragma pack(pop)
 
   static DDS_FILE TextureLoadDds(const char* t_path) {
-    DDS_FILE ddsFile;
+    try {
+      DDS_FILE ddsFile;
 
-    // open the DDS file for binary reading and get file size
-    std::ifstream file(t_path, std::ios::binary | std::ios::ate);
+      // open the DDS file for binary reading and get file size
+      std::ifstream file(t_path, std::ios::binary | std::ios::ate);
 
-    if (!file) {
-      throw std::runtime_error("DDS: Failed to open file: " + std::string(t_path));
+      if (!file) {
+        throw std::runtime_error("DDS: Failed to open file: " + std::string(t_path));
+      }
+
+      // get file size
+      std::streampos pos = file.tellg();
+      // validate
+      if (pos <= 0) {
+        throw std::runtime_error("DDS: Failed to determine file size");
+      }
+
+      const size_t fileSize = pos;
+      file.seekg(0, std::ios::beg);
+
+      char magic[4];
+
+      // read magic
+      if (!file.read(magic, 4) || std::memcmp(magic, "DDS ", 4) != 0) {
+        throw std::runtime_error("DDS: Not a .dds file");
+      }
+
+      // read header struct directly
+      if (!file.read(reinterpret_cast<char*>(&ddsFile.header), sizeof(DDS_HEADER))) {
+        throw std::runtime_error("DDS: Failed to read DDS header");
+      }
+
+      size_t remainingBytes = fileSize - 4 /*magic*/ - sizeof(DDS_HEADER);
+
+      switch (ddsFile.header.ddspf.dwFourCC) {
+        case DXT1:                                                   // little-endian
+          ddsFile.glFormat = GL_COMPRESSED_SRGB_ALPHA_S3TC_DXT1_EXT; // assume sRGB for all non-DXT10 header files
+          ddsFile.blockSize = 8;
+          break;
+        case DXT3:
+          ddsFile.glFormat = GL_COMPRESSED_SRGB_ALPHA_S3TC_DXT3_EXT;
+          ddsFile.blockSize = 16;
+          break;
+        case DXT5:
+          ddsFile.glFormat = GL_COMPRESSED_SRGB_ALPHA_S3TC_DXT5_EXT;
+          ddsFile.blockSize = 16;
+          break;
+        case BC5_U: // non DXT10 header BC5u
+          ddsFile.glFormat = GL_COMPRESSED_RG_RGTC2;
+          ddsFile.blockSize = 16;
+          break;
+        case DX10: // FourCC (DXT10 extension header)
+          // read dxt10 header struct directly
+          if (!file.read(reinterpret_cast<char*>(&ddsFile.dxt10Header), sizeof(DDS_HEADER_DXT10))) {
+            throw std::runtime_error("DDS: Failed to read DXT10 header");
+          }
+
+          if (remainingBytes < sizeof(DDS_HEADER_DXT10)) {
+            throw std::runtime_error("DDS: Invalid file size: missing DX10 header bytes");
+          }
+
+          remainingBytes -= sizeof(DDS_HEADER_DXT10);
+
+          switch (ddsFile.dxt10Header.dxgiFormat) { // NOLINT(clang-diagnostic-switch-enum)
+            case DXGI_FORMAT_BC1_UNORM:
+            case DXGI_FORMAT_BC1_TYPELESS:
+              ddsFile.glFormat = GL_COMPRESSED_RGBA_S3TC_DXT1_EXT; // DXT1
+              ddsFile.blockSize = 8;
+              break;
+            case DXGI_FORMAT_BC1_UNORM_SRGB:
+              ddsFile.glFormat = GL_COMPRESSED_SRGB_ALPHA_S3TC_DXT1_EXT; // DXT1
+              ddsFile.blockSize = 8;
+              break;
+            case DXGI_FORMAT_BC2_UNORM:
+            case DXGI_FORMAT_BC2_TYPELESS:
+              ddsFile.glFormat = GL_COMPRESSED_RGBA_S3TC_DXT3_EXT; // DXT3
+              ddsFile.blockSize = 16;
+              break;
+            case DXGI_FORMAT_BC2_UNORM_SRGB:
+              ddsFile.glFormat = GL_COMPRESSED_SRGB_ALPHA_S3TC_DXT3_EXT; // DXT3
+              ddsFile.blockSize = 16;
+              break;
+            case DXGI_FORMAT_BC3_UNORM:
+            case DXGI_FORMAT_BC3_TYPELESS:
+              ddsFile.glFormat = GL_COMPRESSED_RGBA_S3TC_DXT5_EXT; // DXT5
+              ddsFile.blockSize = 16;
+              break;
+            case DXGI_FORMAT_BC3_UNORM_SRGB:
+              ddsFile.glFormat = GL_COMPRESSED_SRGB_ALPHA_S3TC_DXT5_EXT; // DXT5
+              ddsFile.blockSize = 16;
+              break;
+            case DXGI_FORMAT_BC4_UNORM:
+            case DXGI_FORMAT_BC4_TYPELESS:
+              ddsFile.glFormat = GL_COMPRESSED_RED_RGTC1; // BC4u
+              ddsFile.blockSize = 8;
+              break;
+            case DXGI_FORMAT_BC4_SNORM:
+              throw std::runtime_error("DDS: Unsupported DX10 DXGI_FORMAT: DXGI_FORMAT_BC4_SNORM");
+            case DXGI_FORMAT_BC5_TYPELESS:
+            case DXGI_FORMAT_BC5_UNORM:
+              ddsFile.glFormat = GL_COMPRESSED_RG_RGTC2; // BC5u
+              ddsFile.blockSize = 16;
+              break;
+            case DXGI_FORMAT_BC5_SNORM:
+              throw std::runtime_error("DDS: Unsupported DX10 DXGI_FORMAT: DXGI_FORMAT_BC5_SNORM");
+            case DXGI_FORMAT_BC7_UNORM:
+            case DXGI_FORMAT_BC7_TYPELESS:
+              ddsFile.glFormat = GL_COMPRESSED_RGBA_BPTC_UNORM; // BC7
+              ddsFile.blockSize = 16;
+              break;
+            case DXGI_FORMAT_BC7_UNORM_SRGB:
+              ddsFile.glFormat = GL_COMPRESSED_SRGB_ALPHA_BPTC_UNORM; // BC7
+              ddsFile.blockSize = 16;
+              break;
+            default:
+              throw std::runtime_error("DDS: Unsupported DX10 DXGI_FORMAT");
+          }
+          break;
+        default:
+          throw std::runtime_error("DDS: Unsupported format");
+      }
+
+      // make sure mip map is always at least 1
+      ddsFile.header.dwMipMapCount = ddsFile.header.dwMipMapCount ? ddsFile.header.dwMipMapCount : 1;
+
+      // compute expected size (compressed) and validate
+      auto mipSurfaceSize = [&] (const unsigned int t_w, const unsigned int t_h)-> size_t
+      {
+        const unsigned int blocksW = (t_w + 3) / 4;
+        const unsigned int blocksH = (t_h + 3) / 4;
+        return static_cast<size_t>(blocksW) * static_cast<size_t>(blocksH) * static_cast<size_t>(ddsFile.blockSize);
+      };
+
+      uint64_t     expectedSize = 0;
+      unsigned int w            = ddsFile.header.dwWidth;
+      unsigned int h            = ddsFile.header.dwHeight;
+      for (unsigned int mip = 0; mip < ddsFile.header.dwMipMapCount; ++mip) {
+        expectedSize += mipSurfaceSize(w, h);
+        w = std::max(1u, w / 2u);
+        h = std::max(1u, h / 2u);
+      }
+
+      if (remainingBytes < expectedSize) {
+        throw std::runtime_error("DDS: data size smaller than expected (corrupt or mismatched header)");
+      }
+
+      // read rest of file
+      ddsFile.file = std::make_unique<char[]>(remainingBytes);
+      if (!file.read(ddsFile.file.get(), static_cast<std::streamsize>(remainingBytes))) {
+        throw std::runtime_error("DDS: Failed to read file: " + std::string(t_path));
+      }
+
+      FlipCompressedMipmaps(
+        ddsFile.file,
+        ddsFile.header.dwWidth,
+        ddsFile.header.dwHeight,
+        ddsFile.blockSize,
+        ddsFile.header.dwMipMapCount);
+
+      return ddsFile;
     }
-
-    // get file size
-    std::streampos pos = file.tellg();
-    // validate
-    if (pos <= 0) {
-      throw std::runtime_error("DDS: Failed to determine file size");
+    catch (const std::runtime_error& e) {
+      std::cerr << "DDS: Error: " << e.what() << '\n';
+      return {}; // return default initialized
     }
-
-    const size_t fileSize = pos;
-    file.seekg(0, std::ios::beg);
-
-    char magic[4];
-
-    // read magic
-    if (!file.read(magic, 4) || std::memcmp(magic, "DDS ", 4) != 0) {
-      throw std::runtime_error("DDS: Not a .dds file");
-    }
-
-    // read header struct directly
-    if (!file.read(reinterpret_cast<char*>(&ddsFile.header), sizeof(DDS_HEADER))) {
-      throw std::runtime_error("DDS: Failed to read DDS header");
-    }
-
-    size_t remainingBytes = fileSize - 4 /*magic*/ - sizeof(DDS_HEADER);
-
-    switch (ddsFile.header.ddspf.dwFourCC) {
-      case DXT1:                                                   // little-endian
-        ddsFile.glFormat = GL_COMPRESSED_SRGB_ALPHA_S3TC_DXT1_EXT; // assume sRGB for all non-DXT10 header files
-        ddsFile.blockSize = 8;
-        break;
-      case DXT3:
-        ddsFile.glFormat = GL_COMPRESSED_SRGB_ALPHA_S3TC_DXT3_EXT;
-        ddsFile.blockSize = 16;
-        break;
-      case DXT5:
-        ddsFile.glFormat = GL_COMPRESSED_SRGB_ALPHA_S3TC_DXT5_EXT;
-        ddsFile.blockSize = 16;
-        break;
-      case BC5_U: // non DXT10 header BC5u
-        ddsFile.glFormat = GL_COMPRESSED_RG_RGTC2;
-        ddsFile.blockSize = 16;
-        break;
-      case DX10: // FourCC (DXT10 extension header)
-        // read dxt10 header struct directly
-        if (!file.read(reinterpret_cast<char*>(&ddsFile.dxt10Header), sizeof(DDS_HEADER_DXT10))) {
-          throw std::runtime_error("DDS: Failed to read DXT10 header");
-        }
-
-        if (remainingBytes < sizeof(DDS_HEADER_DXT10)) {
-          throw std::runtime_error("DDS: Invalid file size: missing DX10 header bytes");
-        }
-
-        remainingBytes -= sizeof(DDS_HEADER_DXT10);
-
-        switch (ddsFile.dxt10Header.dxgiFormat) { // NOLINT(clang-diagnostic-switch-enum)
-          case DXGI_FORMAT_BC1_UNORM:
-          case DXGI_FORMAT_BC1_TYPELESS:
-            ddsFile.glFormat = GL_COMPRESSED_RGBA_S3TC_DXT1_EXT; // DXT1
-            ddsFile.blockSize = 8;
-            break;
-          case DXGI_FORMAT_BC1_UNORM_SRGB:
-            ddsFile.glFormat = GL_COMPRESSED_SRGB_ALPHA_S3TC_DXT1_EXT; // DXT1
-            ddsFile.blockSize = 8;
-            break;
-          case DXGI_FORMAT_BC2_UNORM:
-          case DXGI_FORMAT_BC2_TYPELESS:
-            ddsFile.glFormat = GL_COMPRESSED_RGBA_S3TC_DXT3_EXT; // DXT3
-            ddsFile.blockSize = 16;
-            break;
-          case DXGI_FORMAT_BC2_UNORM_SRGB:
-            ddsFile.glFormat = GL_COMPRESSED_SRGB_ALPHA_S3TC_DXT3_EXT; // DXT3
-            ddsFile.blockSize = 16;
-            break;
-          case DXGI_FORMAT_BC3_UNORM:
-          case DXGI_FORMAT_BC3_TYPELESS:
-            ddsFile.glFormat = GL_COMPRESSED_RGBA_S3TC_DXT5_EXT; // DXT5
-            ddsFile.blockSize = 16;
-            break;
-          case DXGI_FORMAT_BC3_UNORM_SRGB:
-            ddsFile.glFormat = GL_COMPRESSED_SRGB_ALPHA_S3TC_DXT5_EXT; // DXT5
-            ddsFile.blockSize = 16;
-            break;
-          case DXGI_FORMAT_BC4_UNORM:
-          case DXGI_FORMAT_BC4_TYPELESS:
-            ddsFile.glFormat = GL_COMPRESSED_RED_RGTC1; // BC4u
-            ddsFile.blockSize = 8;
-            break;
-          case DXGI_FORMAT_BC4_SNORM:
-            throw std::runtime_error("DDS: Unsupported DX10 DXGI_FORMAT");
-          case DXGI_FORMAT_BC5_TYPELESS:
-          case DXGI_FORMAT_BC5_UNORM:
-            ddsFile.glFormat = GL_COMPRESSED_RG_RGTC2; // BC5n
-            ddsFile.blockSize = 16;
-            break;
-          case DXGI_FORMAT_BC5_SNORM:
-            throw std::runtime_error("DDS: Unsupported DX10 DXGI_FORMAT");
-          case DXGI_FORMAT_BC7_UNORM:
-          case DXGI_FORMAT_BC7_TYPELESS:
-            ddsFile.glFormat = GL_COMPRESSED_RGBA_BPTC_UNORM; // BC7
-            ddsFile.blockSize = 16;
-            break;
-          case DXGI_FORMAT_BC7_UNORM_SRGB:
-            ddsFile.glFormat = GL_COMPRESSED_SRGB_ALPHA_BPTC_UNORM; // BC7
-            ddsFile.blockSize = 16;
-            break;
-          default:
-            throw std::runtime_error("DDS: Unsupported DX10 DXGI_FORMAT");
-        }
-        break;
-      default:
-        throw std::runtime_error("DDS: Unsupported format");
-    }
-
-    // make sure mip map is always at least 1
-    ddsFile.header.dwMipMapCount = ddsFile.header.dwMipMapCount ? ddsFile.header.dwMipMapCount : 1;
-
-    // compute expected size (compressed) and validate
-    auto mipSurfaceSize = [&] (const unsigned int t_w, const unsigned int t_h)-> size_t
-    {
-      const unsigned int blocksW = (t_w + 3) / 4;
-      const unsigned int blocksH = (t_h + 3) / 4;
-      return static_cast<size_t>(blocksW) * static_cast<size_t>(blocksH) * static_cast<size_t>(ddsFile.blockSize);
-    };
-
-    uint64_t     expectedSize = 0;
-    unsigned int w            = ddsFile.header.dwWidth;
-    unsigned int h            = ddsFile.header.dwHeight;
-    for (unsigned int mip = 0; mip < ddsFile.header.dwMipMapCount; ++mip) {
-      expectedSize += mipSurfaceSize(w, h);
-      w = std::max(1u, w / 2u);
-      h = std::max(1u, h / 2u);
-    }
-
-    if (remainingBytes < expectedSize) {
-      throw std::runtime_error("DDS: data size smaller than expected (corrupt or mismatched header)");
-    }
-
-    // read rest of file
-    ddsFile.file = std::make_unique<char[]>(remainingBytes);
-    if (!file.read(ddsFile.file.get(), static_cast<std::streamsize>(remainingBytes))) {
-      throw std::runtime_error("DDS: Failed to read file: " + std::string(t_path));
-    }
-
-    FlipCompressedMipmaps(
-      ddsFile.file,
-      ddsFile.header.dwWidth,
-      ddsFile.header.dwHeight,
-      ddsFile.blockSize,
-      ddsFile.header.dwMipMapCount);
-
-    return ddsFile;
   }
 
 private:
