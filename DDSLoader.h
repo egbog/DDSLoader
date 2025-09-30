@@ -181,19 +181,26 @@ public:
       const size_t fileSize = pos;
       file.seekg(0, std::ios::beg);
 
-      char magic[4];
+      // read whole file at once
+      auto buffer = std::make_unique<char[]>(fileSize);
+      if (!file.read(buffer.get(), static_cast<std::streamsize>(fileSize))) {
+        throw std::runtime_error("DDS: Failed to read file");
+      }
 
-      // read magic
-      if (!file.read(magic, 4) || std::memcmp(magic, "DDS ", 4) != 0) {
+      // cursor into buffer
+      const char* ptr = buffer.get();
+
+      if (std::memcmp(ptr, "DDS ", 4) != 0) {
         throw std::runtime_error("DDS: Not a .dds file");
       }
+      ptr +=4; // advance pointer
 
-      // read header struct directly
-      if (!file.read(reinterpret_cast<char*>(&ddsFile.header), sizeof(DDS_HEADER))) {
-        throw std::runtime_error("DDS: Failed to read DDS header");
-      }
+      // copy header
+      std::memcpy(&ddsFile.header, ptr, sizeof(DDS_HEADER));
+      ptr += sizeof(DDS_HEADER);
 
-      size_t remainingBytes = fileSize - 4 /*magic*/ - sizeof(DDS_HEADER);
+      size_t remainingBytes = fileSize - (ptr - buffer.get());
+
 
       switch (ddsFile.header.ddspf.dwFourCC) {
         case DXT1:                                                   // little-endian
@@ -213,16 +220,18 @@ public:
           ddsFile.blockSize = 16;
           break;
         case DX10: // FourCC (DXT10 extension header)
-          // read dxt10 header struct directly
-          if (!file.read(reinterpret_cast<char*>(&ddsFile.dxt10Header), sizeof(DDS_HEADER_DXT10))) {
-            throw std::runtime_error("DDS: Failed to read DXT10 header");
+          // copy dxt10 header into struct directly
+          // handle DX10 header if present
+          if (ddsFile.header.ddspf.dwFourCC == DX10) {
+              std::memcpy(&ddsFile.dxt10Header, ptr, sizeof(DDS_HEADER_DXT10));
+              ptr += sizeof(DDS_HEADER_DXT10);
           }
 
           if (remainingBytes < sizeof(DDS_HEADER_DXT10)) {
             throw std::runtime_error("DDS: Invalid file size: missing DX10 header bytes");
           }
 
-          remainingBytes -= sizeof(DDS_HEADER_DXT10);
+          remainingBytes = fileSize - (ptr - buffer.get());
 
           switch (ddsFile.dxt10Header.dxgiFormat) { // NOLINT(clang-diagnostic-switch-enum)
             case DXGI_FORMAT_BC1_UNORM:
@@ -307,11 +316,9 @@ public:
         throw std::runtime_error("DDS: data size smaller than expected (corrupt or mismatched header)");
       }
 
-      // read rest of file
+      // remaining compressed data
       ddsFile.file = std::make_unique<char[]>(remainingBytes);
-      if (!file.read(ddsFile.file.get(), static_cast<std::streamsize>(remainingBytes))) {
-        throw std::runtime_error("DDS: Failed to read file: " + std::string(t_path));
-      }
+      std::memcpy(ddsFile.file.get(), ptr, remainingBytes);
 
       FlipCompressedMipmaps(
         ddsFile.file,
