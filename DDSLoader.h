@@ -394,8 +394,8 @@ private:
     GL_COMPRESSED_SRGB_ALPHA_S3TC_DXT5_EXT = 0x8C4F, // DXT5 RGBA sRGB
     GL_COMPRESSED_RGBA_BPTC_UNORM          = 0x8E8C, // BC7 RGBA linear
     GL_COMPRESSED_SRGB_ALPHA_BPTC_UNORM    = 0x8E8D, // BC7 RGBA sRGB
-    GL_COMPRESSED_RG_RGTC2                 = 0x8D8D, // BC5n RG linear
     GL_COMPRESSED_RED_RGTC1                = 0x8DBB, // BC4u R linear
+    GL_COMPRESSED_RG_RGTC2                 = 0x8DBD, // BC5n RG linear
   };
 #endif
 
