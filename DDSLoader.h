@@ -1,7 +1,5 @@
 #pragma once
 #include <Dxgiformat.h>
-#include <algorithm>
-#include <filesystem>
 #include <fstream>
 #include <iostream>
 
@@ -364,7 +362,6 @@ public:
       }
 
       if (m_flipOnLoad) {
-        std::cout << "Flipped data" << '\n';
         Flip(ddsFile);
       }
 
