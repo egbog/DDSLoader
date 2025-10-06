@@ -208,7 +208,7 @@ public:
 
 #pragma pack(pop)
 
-  static DDS_FILE TextureLoadDds(const char* t_path) {
+  static DDS_FILE TextureLoadDds(const std::string& t_path) {
     try {
       DDS_FILE ddsFile;
 
@@ -216,7 +216,7 @@ public:
       std::ifstream file(t_path, std::ios::binary | std::ios::ate);
 
       if (!file) {
-        throw std::runtime_error("Failed to open file: " + std::string(t_path));
+        throw std::runtime_error("Failed to open file: " + t_path);
       }
 
       // get file size
