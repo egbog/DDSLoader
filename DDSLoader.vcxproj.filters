@@ -20,7 +20,7 @@
     </ClCompile>
   </ItemGroup>
   <ItemGroup>
-    <ClInclude Include="DDSLoader.h">
+    <ClInclude Include="include\dds\DDSLoader.h">
       <Filter>Header Files</Filter>
     </ClInclude>
   </ItemGroup>
