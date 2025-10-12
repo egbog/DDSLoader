@@ -206,6 +206,7 @@ public:
     unsigned int     blockSize = 0;
     unsigned int     glFormat  = 0; // fallback format
     Dds::BitFlag     flags;
+    size_t*          mipSizeBytes = nullptr;
 
     DDS_FILE() = default;
     ~DDS_FILE();

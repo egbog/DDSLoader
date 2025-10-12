@@ -7,11 +7,14 @@
 
 LoadDds::DDS_FILE::~DDS_FILE() {
   delete [] file;
+  delete [] mipSizeBytes;
 }
 
 LoadDds::DDS_FILE::DDS_FILE(DDS_FILE&& t_other) noexcept {
-  file         = t_other.file;
-  t_other.file = nullptr;
+  file                 = t_other.file;
+  t_other.file         = nullptr;
+  mipSizeBytes         = t_other.mipSizeBytes;
+  t_other.mipSizeBytes = nullptr;
 
   header      = t_other.header;
   dxt10Header = t_other.dxt10Header;
@@ -24,6 +27,8 @@ LoadDds::DDS_FILE& LoadDds::DDS_FILE::operator=(DDS_FILE&& t_other) noexcept {
   if (this != &t_other) {
     file         = t_other.file;
     t_other.file = nullptr;
+    mipSizeBytes         = t_other.mipSizeBytes;
+  t_other.mipSizeBytes = nullptr;
 
     header      = t_other.header;
     dxt10Header = t_other.dxt10Header;
@@ -183,6 +188,8 @@ LoadDds::DDS_FILE LoadDds::TextureLoadDds(const char* t_path) {
         throw std::runtime_error("Unsupported format");
     }
 
+    ddsFile.mipSizeBytes = new size_t[ddsFile.header.dwMipMapCount];
+
     // verify we read all bytes based on the block size, mip maps and resolution
     if (!ValidateExpectedSize(ddsFile, remainingBytes)) {
       throw std::runtime_error("Data size smaller than expected (corrupt or mismatched header)");
@@ -217,7 +224,9 @@ bool LoadDds::ValidateExpectedSize(const DDS_FILE& t_ddsFile, const size_t t_rem
   uint32_t w            = t_ddsFile.header.dwWidth;
   uint32_t h            = t_ddsFile.header.dwHeight;
   for (uint32_t mip = 0; mip < t_ddsFile.header.dwMipMapCount; ++mip) {
-    expectedSize += mipSurfaceSize(w, h);
+    const size_t mipSize = mipSurfaceSize(w, h);
+    expectedSize += mipSize;
+    t_ddsFile.mipSizeBytes[mip] = mipSize;
     w = std::max(1u, w / 2u);
     h = std::max(1u, h / 2u);
   }
