@@ -7,4 +7,8 @@ target_include_directories(dds PUBLIC
 	$<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
 )
 
+if (MSVC)
+    add_compile_options(/wd4369)
+endif()
+
 target_compile_features(dds PUBLIC cxx_std_20)
