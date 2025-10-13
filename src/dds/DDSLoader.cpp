@@ -5,42 +5,6 @@
 #include <iostream>
 #include <string>
 
-LoadDds::DDS_FILE::~DDS_FILE() {
-  delete [] file;
-  delete [] mipSizeBytes;
-}
-
-LoadDds::DDS_FILE::DDS_FILE(DDS_FILE&& t_other) noexcept {
-  file                 = t_other.file;
-  t_other.file         = nullptr;
-  mipSizeBytes         = t_other.mipSizeBytes;
-  t_other.mipSizeBytes = nullptr;
-
-  header         = t_other.header;
-  dxt10Header    = t_other.dxt10Header;
-  blockSize      = t_other.blockSize;
-  glFormat       = t_other.glFormat;
-  flags          = t_other.flags;
-  totalSizeBytes = t_other.totalSizeBytes;
-}
-
-LoadDds::DDS_FILE& LoadDds::DDS_FILE::operator=(DDS_FILE&& t_other) noexcept {
-  if (this != &t_other) {
-    file                 = t_other.file;
-    t_other.file         = nullptr;
-    mipSizeBytes         = t_other.mipSizeBytes;
-    t_other.mipSizeBytes = nullptr;
-
-    header         = t_other.header;
-    dxt10Header    = t_other.dxt10Header;
-    blockSize      = t_other.blockSize;
-    glFormat       = t_other.glFormat;
-    flags          = t_other.flags;
-    totalSizeBytes = t_other.totalSizeBytes;
-  }
-  return *this;
-}
-
 LoadDds::DDS_FILE LoadDds::TextureLoadDds(const char* t_path) {
   try {
     DDS_FILE ddsFile;
@@ -68,36 +32,30 @@ LoadDds::DDS_FILE LoadDds::TextureLoadDds(const char* t_path) {
     }
 
     // read whole file at once
-    auto buffer = std::make_unique<std::byte[]>(fileSize);
-    if (!file.read(reinterpret_cast<char*>(buffer.get()), static_cast<std::streamsize>(fileSize))) {
+    auto buffer = std::vector<std::byte>(fileSize);
+    if (!file.read(reinterpret_cast<char*>(buffer.data()), static_cast<std::streamsize>(fileSize))) {
       throw std::runtime_error("DDS: Failed to read file");
     }
 
-    if (std::memcmp(buffer.get(), "DDS ", 4) != 0) {
+    if (std::memcmp(buffer.data(), "DDS ", 4) != 0) {
       throw std::runtime_error("Not a .dds file");
     }
 
     size_t headerOffset = 4;
 
     // copy header
-    std::memcpy(&ddsFile.header, buffer.get() + headerOffset, sizeof(DDS_HEADER));
+    std::memcpy(&ddsFile.header, buffer.data() + headerOffset, sizeof(DDS_HEADER));
     headerOffset += sizeof(DDS_HEADER);
 
     // handle DX10 header if present
     if (ddsFile.header.ddspf.dwFourCC == DX10) {
-      std::memcpy(&ddsFile.dxt10Header, buffer.get() + headerOffset, sizeof(DDS_HEADER_DXT10));
+      std::memcpy(&ddsFile.dxt10Header, buffer.data() + headerOffset, sizeof(DDS_HEADER_DXT10));
       headerOffset += sizeof(DDS_HEADER_DXT10);
     }
 
     // make sure mip map is always at least 1
     ddsFile.header.dwMipMapCount = ddsFile.header.dwMipMapCount ? ddsFile.header.dwMipMapCount : 1;
-
-    size_t remainingBytes = fileSize - headerOffset;
-
-    // remaining compressed data
-    //ddsFile.file = std::make_unique<std::byte[]>(remainingBytes);
-    ddsFile.file = new std::byte[remainingBytes];
-    std::memcpy(ddsFile.file, buffer.get() + headerOffset, remainingBytes);
+    ddsFile.mipMaps.reserve(ddsFile.header.dwMipMapCount);
 
     switch (ddsFile.header.ddspf.dwFourCC) {
       case DXT1:                                                   // little-endian
@@ -190,10 +148,11 @@ LoadDds::DDS_FILE LoadDds::TextureLoadDds(const char* t_path) {
         throw std::runtime_error("Unsupported format");
     }
 
-    ddsFile.mipSizeBytes = new size_t[ddsFile.header.dwMipMapCount];
+    auto   itBegin        = buffer.begin() + static_cast<long long int>(headerOffset);
+    size_t remainingBytes = fileSize - headerOffset;
 
     // verify we read all bytes based on the block size, mip maps and resolution
-    if (!ValidateExpectedSize(ddsFile, remainingBytes)) {
+    if (!ValidateExpectedSize(ddsFile, remainingBytes, itBegin)) {
       throw std::runtime_error("Data size smaller than expected (corrupt or mismatched header)");
     }
 
@@ -213,7 +172,9 @@ void LoadDds::FlipVerticalOnLoad(const bool t_flip) {
   m_flipOnLoad = t_flip;
 }
 
-bool LoadDds::ValidateExpectedSize(DDS_FILE& t_ddsFile, const size_t t_remainingBytes) {
+bool LoadDds::ValidateExpectedSize(DDS_FILE&                               t_ddsFile,
+                                   const size_t                            t_remainingBytes,
+                                   const std::vector<std::byte>::iterator& t_itBegin) {
   // compute expected size (compressed) and validate
   auto mipSurfaceSize = [&] (const uint32_t t_w, const uint32_t t_h)-> size_t
   {
@@ -224,41 +185,52 @@ bool LoadDds::ValidateExpectedSize(DDS_FILE& t_ddsFile, const size_t t_remaining
 
   uint32_t w = t_ddsFile.header.dwWidth;
   uint32_t h = t_ddsFile.header.dwHeight;
+
+  size_t offset = 0;
+
   for (uint32_t mip = 0; mip < t_ddsFile.header.dwMipMapCount; ++mip) {
-    const size_t mipSize        = mipSurfaceSize(w, h);
-    t_ddsFile.mipSizeBytes[mip] = mipSize;
-    t_ddsFile.totalSizeBytes += mipSize;
+    const size_t mipSize = mipSurfaceSize(w, h); // size of this mip level in bytes
+
+    const size_t beginOffset = offset;
+    const size_t endOffset   = offset + mipSize;
+
+    // Safety check
+    if (endOffset > t_remainingBytes) {
+      return false; // file too short for this mip
+    }
+
+    t_ddsFile.mipMaps.emplace_back(
+      w,
+      h,
+      std::vector(t_itBegin + static_cast<ptrdiff_t>(beginOffset), t_itBegin + static_cast<ptrdiff_t>(endOffset)));
+
+    offset += mipSize;
+
     w = std::max(1u, w / 2u);
     h = std::max(1u, h / 2u);
   }
 
+  t_ddsFile.totalSizeBytes = offset;
+
+  // return true if the calculated size is less than or equal to the length of the rest of the file 
   return t_remainingBytes >= t_ddsFile.totalSizeBytes;
 }
 
-void LoadDds::Flip(const DDS_FILE& t_ddsFile) {
-  const uint32_t width     = t_ddsFile.header.dwWidth;
-  const uint32_t height    = t_ddsFile.header.dwHeight;
+void LoadDds::Flip(DDS_FILE& t_ddsFile) {
   const uint32_t blockSize = t_ddsFile.blockSize;
-  const uint32_t mipCount  = t_ddsFile.header.dwMipMapCount;
-  size_t         offset    = 0;
 
-  for (uint32_t mip = 0; mip < mipCount; ++mip) {
+  for (auto& [width, height, data] : t_ddsFile.mipMaps) {
     // this mip's resolution
-    const size_t mipWidth  = std::max(static_cast<uint32_t>(1), width >> mip);
-    const size_t mipHeight = std::max(static_cast<uint32_t>(1), height >> mip);
+    const uint32_t blocksWide = (width + 3) / 4;
+    const uint32_t blocksHigh = (height + 3) / 4;
 
-    const size_t blocksWide = (mipWidth + 3) / 4;
-    const size_t blocksHigh = (mipHeight + 3) / 4;
-
-    std::byte* mipPtr = t_ddsFile.file + offset;
-
-    const size_t rowSize = blocksWide * blockSize;
+    const uint32_t rowSize = blocksWide * blockSize;
 
     // flip blocks vertically row by row
-    for (unsigned int y = 0; y < blocksHigh / 2; ++y) {
-      std::byte* topRow    = mipPtr + y * rowSize;
-      std::byte* bottomRow = mipPtr + (blocksHigh - 1 - y) * rowSize;
-      for (unsigned int x = 0; x < blocksWide; ++x) {
+    for (uint32_t y = 0; y < blocksHigh / 2; ++y) {
+      std::byte* topRow    = data.data() + static_cast<size_t>(y * rowSize);
+      std::byte* bottomRow = data.data() + static_cast<size_t>((blocksHigh - 1 - y) * rowSize);
+      for (uint32_t x = 0; x < blocksWide; ++x) {
         std::byte* topBlock    = topRow + static_cast<size_t>(x * blockSize);
         std::byte* bottomBlock = bottomRow + static_cast<size_t>(x * blockSize);
 
@@ -286,8 +258,8 @@ void LoadDds::Flip(const DDS_FILE& t_ddsFile) {
     }
 
     if (blocksHigh % 2 == 1) {
-      std::byte* middleRow = mipPtr + (blocksHigh / 2) * rowSize;
-      for (unsigned int z = 0; z < blocksWide; ++z) {
+      std::byte* middleRow = data.data() + static_cast<size_t>((blocksHigh / 2) * rowSize);
+      for (uint32_t z = 0; z < blocksWide; ++z) {
         if (t_ddsFile.flags.HasFlag(Dds::Flag::DXT1)) {
           FlipDxt1Block(middleRow + static_cast<size_t>(z * blockSize));
         }
@@ -305,9 +277,6 @@ void LoadDds::Flip(const DDS_FILE& t_ddsFile) {
         }
       }
     }
-
-    // move offset to next mip
-    offset += rowSize * blocksHigh;
   }
 }
 

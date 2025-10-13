@@ -2,6 +2,7 @@
 
 #include <cstddef>
 #include <cstdint>
+#include <vector>
 
 /*
  File Structure:
@@ -193,30 +194,36 @@ public:
   {
     DXGI_FORMAT                   dxgiFormat        = static_cast<DXGI_FORMAT>(0); // DXGI_FORMAT_UNKNOWN
     Dds::D3D10_RESOURCE_DIMENSION resourceDimension = Dds::D3D10_RESOURCE_DIMENSION_UNKNOWN;
-    unsigned int                  miscFlag          = 0;
-    unsigned int                  arraySize         = 0;
-    unsigned int                  miscFlags2        = 0;
+    uint32_t                      miscFlag          = 0;
+    uint32_t                      arraySize         = 0;
+    uint32_t                      miscFlags2        = 0;
+  };
+#pragma pack(pop)
+
+  struct MIP_LEVEL
+  {
+    uint32_t               width  = 0;
+    uint32_t               height = 0;
+    std::vector<std::byte> data;
   };
 
   struct DDS_FILE
   {
-    DDS_HEADER       header;
-    DDS_HEADER_DXT10 dxt10Header;
-    std::byte*       file      = nullptr;
-    unsigned int     blockSize = 0;
-    unsigned int     glFormat  = 0; // fallback format
-    Dds::BitFlag     flags;
-    size_t*          mipSizeBytes   = nullptr;
-    size_t           totalSizeBytes = 0;
+    DDS_HEADER             header;
+    DDS_HEADER_DXT10       dxt10Header;
+    Dds::BitFlag           flags;
+    uint32_t               blockSize = 0;
+    uint32_t               glFormat  = 0; // fallback format
+    std::vector<MIP_LEVEL> mipMaps;
+    size_t                 totalSizeBytes = 0;
 
-    DDS_FILE() = default;
-    ~DDS_FILE();
-    DDS_FILE(DDS_FILE&& t_other) noexcept;
-    DDS_FILE(const DDS_FILE& t_other) = delete;
-    DDS_FILE& operator=(DDS_FILE&& t_other) noexcept;
-    DDS_FILE& operator=(const DDS_FILE&) = delete;
+    DDS_FILE()                              = default;
+    ~DDS_FILE()                             = default;
+    DDS_FILE(DDS_FILE&& t_other)            = default;
+    DDS_FILE(const DDS_FILE& t_other)       = delete;
+    DDS_FILE& operator=(DDS_FILE&& t_other) = default;
+    DDS_FILE& operator=(const DDS_FILE&)    = delete;
   };
-#pragma pack(pop)
 
   static DDS_FILE TextureLoadDds(const char* t_path);
   static void     FlipVerticalOnLoad(bool t_flip);
@@ -248,8 +255,10 @@ private:
 
   static inline bool m_flipOnLoad = false;
 
-  static bool ValidateExpectedSize(DDS_FILE& t_ddsFile, size_t t_remainingBytes);
-  static void Flip(const DDS_FILE& t_ddsFile);
+  static bool ValidateExpectedSize(DDS_FILE&                               t_ddsFile,
+                                   size_t                                  t_remainingBytes,
+                                   const std::vector<std::byte>::iterator& t_itBegin);
+  static void Flip(DDS_FILE& t_ddsFile);
   // general 4-byte row swap (DXT1 color/DXT3 alpha or color)
   static void Flip4ByteRow(std::byte* t_colorBlock);
   // DXT5 alpha / BC4 / BC5 single channel
