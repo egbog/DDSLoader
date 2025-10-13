@@ -16,25 +16,27 @@ LoadDds::DDS_FILE::DDS_FILE(DDS_FILE&& t_other) noexcept {
   mipSizeBytes         = t_other.mipSizeBytes;
   t_other.mipSizeBytes = nullptr;
 
-  header      = t_other.header;
-  dxt10Header = t_other.dxt10Header;
-  blockSize   = t_other.blockSize;
-  glFormat    = t_other.glFormat;
-  flags       = t_other.flags;
+  header         = t_other.header;
+  dxt10Header    = t_other.dxt10Header;
+  blockSize      = t_other.blockSize;
+  glFormat       = t_other.glFormat;
+  flags          = t_other.flags;
+  totalSizeBytes = t_other.totalSizeBytes;
 }
 
 LoadDds::DDS_FILE& LoadDds::DDS_FILE::operator=(DDS_FILE&& t_other) noexcept {
   if (this != &t_other) {
-    file         = t_other.file;
-    t_other.file = nullptr;
+    file                 = t_other.file;
+    t_other.file         = nullptr;
     mipSizeBytes         = t_other.mipSizeBytes;
-  t_other.mipSizeBytes = nullptr;
+    t_other.mipSizeBytes = nullptr;
 
-    header      = t_other.header;
-    dxt10Header = t_other.dxt10Header;
-    blockSize   = t_other.blockSize;
-    glFormat    = t_other.glFormat;
-    flags       = t_other.flags;
+    header         = t_other.header;
+    dxt10Header    = t_other.dxt10Header;
+    blockSize      = t_other.blockSize;
+    glFormat       = t_other.glFormat;
+    flags          = t_other.flags;
+    totalSizeBytes = t_other.totalSizeBytes;
   }
   return *this;
 }
@@ -211,7 +213,7 @@ void LoadDds::FlipVerticalOnLoad(const bool t_flip) {
   m_flipOnLoad = t_flip;
 }
 
-bool LoadDds::ValidateExpectedSize(const DDS_FILE& t_ddsFile, const size_t t_remainingBytes) {
+bool LoadDds::ValidateExpectedSize(DDS_FILE& t_ddsFile, const size_t t_remainingBytes) {
   // compute expected size (compressed) and validate
   auto mipSurfaceSize = [&] (const uint32_t t_w, const uint32_t t_h)-> size_t
   {
@@ -220,18 +222,17 @@ bool LoadDds::ValidateExpectedSize(const DDS_FILE& t_ddsFile, const size_t t_rem
     return static_cast<size_t>(blocksW) * static_cast<size_t>(blocksH) * static_cast<size_t>(t_ddsFile.blockSize);
   };
 
-  size_t   expectedSize = 0;
-  uint32_t w            = t_ddsFile.header.dwWidth;
-  uint32_t h            = t_ddsFile.header.dwHeight;
+  uint32_t w = t_ddsFile.header.dwWidth;
+  uint32_t h = t_ddsFile.header.dwHeight;
   for (uint32_t mip = 0; mip < t_ddsFile.header.dwMipMapCount; ++mip) {
-    const size_t mipSize = mipSurfaceSize(w, h);
-    expectedSize += mipSize;
+    const size_t mipSize        = mipSurfaceSize(w, h);
     t_ddsFile.mipSizeBytes[mip] = mipSize;
+    t_ddsFile.totalSizeBytes += mipSize;
     w = std::max(1u, w / 2u);
     h = std::max(1u, h / 2u);
   }
 
-  return t_remainingBytes >= expectedSize;
+  return t_remainingBytes >= t_ddsFile.totalSizeBytes;
 }
 
 void LoadDds::Flip(const DDS_FILE& t_ddsFile) {

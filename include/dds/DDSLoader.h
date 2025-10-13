@@ -206,7 +206,8 @@ public:
     unsigned int     blockSize = 0;
     unsigned int     glFormat  = 0; // fallback format
     Dds::BitFlag     flags;
-    size_t*          mipSizeBytes = nullptr;
+    size_t*          mipSizeBytes   = nullptr;
+    size_t           totalSizeBytes = 0;
 
     DDS_FILE() = default;
     ~DDS_FILE();
@@ -247,7 +248,7 @@ private:
 
   static inline bool m_flipOnLoad = false;
 
-  static bool ValidateExpectedSize(const DDS_FILE& t_ddsFile, size_t t_remainingBytes);
+  static bool ValidateExpectedSize(DDS_FILE& t_ddsFile, size_t t_remainingBytes);
   static void Flip(const DDS_FILE& t_ddsFile);
   // general 4-byte row swap (DXT1 color/DXT3 alpha or color)
   static void Flip4ByteRow(std::byte* t_colorBlock);
